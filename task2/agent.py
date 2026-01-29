@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.models.openrouter import OpenRouter
 from agno.tools.file import FileTools
 from agno.tools.shell import ShellTools
+from agno.db.sqlite import SqliteDb
 
 from config import OPENROUTER_API_KEY, MODEL
 
@@ -27,7 +28,6 @@ SYSTEM_PROMPT = """Ты - coding agent, помощник программист�
 Отвечай на русском языке.
 """
 
-# Глобальный агент для сохранения контекста
 _agent: Agent | None = None
 
 
@@ -41,6 +41,8 @@ def get_agent() -> Agent:
                 FileTools(),      # read_file, save_file, list_files
                 ShellTools(),     # run_shell_command
             ],
+            # db=SqliteDb(db_file="agent.db"),
+            # add_history_to_context=True,
             instructions=SYSTEM_PROMPT,
             markdown=True,
         )

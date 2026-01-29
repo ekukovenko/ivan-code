@@ -21,8 +21,10 @@ def main():
             if not user_input:
                 continue
 
-            from agent import run_agent
-            run_agent(user_input)
+            # print(user_input)
+
+            # from agent import run_agent
+            # run_agent(user_input)
 
             log.separator()
 

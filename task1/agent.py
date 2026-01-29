@@ -21,6 +21,7 @@ def run_agent(user_message: str) -> str:
     ]
 
     while True:
+        log.debug(f"Вызов LLM с {len(messages)} сообщениями")
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
@@ -35,6 +36,7 @@ def run_agent(user_message: str) -> str:
             args = tool_call["args"]
 
             log.tool_call(name, args)
+            log.debug(f"Вызов инструмента {name}: args={args}")
 
             result = tools_by_name[name].invoke(args)
             log.tool_result(result)

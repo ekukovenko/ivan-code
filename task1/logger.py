@@ -33,7 +33,8 @@ class Logger:
     def tool_result(self, result: str):
         """Результат инструмента"""
         if self.level >= LogLevel.DEBUG:
-            preview = result[:200] + "..." if len(result) > 200 else result
+            # preview = result[:200] + "..." if len(result) > 200 else result
+            preview = result
             preview = preview.replace('\n', ' | ')
             print(f"\033[90m   -> {preview}\033[0m")
 

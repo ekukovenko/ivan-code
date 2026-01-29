@@ -10,4 +10,6 @@ dependencies = [
     "langchain-openai>=1.1.7",
     "agno>=1.1.0",
     "textual>=4.0.0",
+    "textual-autocomplete>=3.0.0",
+    "sqlalchemy>=2.0.46",
 ]
