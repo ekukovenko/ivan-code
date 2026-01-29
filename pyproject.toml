@@ -1,0 +1,13 @@
+[project]
+name = "mega-ai-itmo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dotenv>=0.9.9",
+    "langchain>=1.2.7",
+    "langchain-openai>=1.1.7",
+    "agno>=1.1.0",
+    "textual>=4.0.0",
+]
