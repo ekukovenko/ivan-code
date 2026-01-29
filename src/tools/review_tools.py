@@ -76,12 +76,14 @@ def create_review_tools(github_client: GitHubClient, pr_number: int):
         summary: str,
         comments: str = "",
     ) -> str:
-        """Submit the final review for the PR.
+        """ОБЯЗАТЕЛЬНО вызови этот tool в конце ревью для отправки результата на GitHub.
+
+        Без вызова этого tool ревью НЕ будет опубликовано!
 
         Args:
-            decision: APPROVE | REQUEST_CHANGES | COMMENT
-            summary: Summary of the review
-            comments: Optional inline comments (format: file:line:comment, one per line)
+            decision: Решение - одно из: APPROVE | REQUEST_CHANGES | COMMENT
+            summary: Краткое резюме ревью на русском языке
+            comments: Опционально - inline комментарии (формат: file:line:comment, по одному на строку)
         """
         try:
             # Parse inline comments
@@ -99,13 +101,30 @@ def create_review_tools(github_client: GitHubClient, pr_number: int):
                                 }
                             )
 
-            github_client.create_pr_review(
-                pr_number=pr_number,
-                body=summary,
-                event=decision.upper(),
-                comments=inline_comments if inline_comments else None,
-            )
-            return f"Review submitted: {decision}"
+            # Add Reviewer Agent marker to the summary
+            marked_summary = f"👀 **Reviewer Agent**\n\n{summary}"
+            event = decision.upper()
+
+            try:
+                github_client.create_pr_review(
+                    pr_number=pr_number,
+                    body=marked_summary,
+                    event=event,
+                    comments=inline_comments if inline_comments else None,
+                )
+                return f"Review submitted: {decision}"
+            except Exception as e:
+                # GitHub doesn't allow approving own PRs - fallback to COMMENT
+                if "approve your own" in str(e).lower() and event == "APPROVE":
+                    marked_summary = f"👀 **Reviewer Agent** ✅ APPROVED\n\n{summary}\n\n---\n*Статус: APPROVE (отправлено как COMMENT из-за ограничений GitHub)*"
+                    github_client.create_pr_review(
+                        pr_number=pr_number,
+                        body=marked_summary,
+                        event="COMMENT",
+                        comments=inline_comments if inline_comments else None,
+                    )
+                    return f"Review submitted: APPROVE (as COMMENT due to GitHub limitation)"
+                raise
         except Exception as e:
             return f"Error submitting review: {e}"
 

@@ -5,9 +5,16 @@ Flow:
 2. PR created → CI runs → Reviewer Agent reviews
 3. If changes requested → Code Agent fixes → back to step 2
 4. If approved → ready for merge
+
+TODO: Webhook-driven CI wait (better approach for production):
+- Instead of polling, use webhook events (check_run.completed)
+- CLI creates PR and exits, webhook triggers reviewer when CI done
+- Requires: state tracking for pending PRs, webhook handler enhancement
+- See: src/webhook/server.py for existing webhook infrastructure
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 from src.core.config import get_settings
@@ -18,6 +25,9 @@ from src.agents.reviewer_agent import ReviewerAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# CI polling settings
+CI_POLL_INTERVAL = 10  # seconds between status checks
 
 
 @dataclass
@@ -45,6 +55,48 @@ class SDLCOrchestrator:
         self.code_agent = code_agent or CodeAgent(self.github)
         self.reviewer_agent = reviewer_agent or ReviewerAgent(self.github)
         self.max_iterations = settings.max_iterations
+        self.ci_wait_timeout = settings.ci_wait_timeout
+
+    def wait_for_ci(self, pr_number: int, timeout: int | None = None) -> str:
+        """Wait for CI to complete with polling.
+
+        Args:
+            pr_number: PR number to check
+            timeout: Max seconds to wait (0 = no wait), uses CI_WAIT_TIMEOUT from env
+
+        Returns:
+            CI status: 'success', 'failure', 'pending', or 'timeout'
+        """
+        if timeout is None:
+            timeout = self.ci_wait_timeout
+
+        if timeout <= 0:
+            return "skipped"
+
+        start_time = time.time()
+        elapsed = 0
+
+        while elapsed < timeout:
+            status = self.github.get_pr_ci_status(pr_number)
+
+            if status.status in ("success", "failure"):
+                logger.info(f"CI completed: {status.status} (waited {int(elapsed)}s)")
+                return status.status
+
+            # Still pending
+            elapsed = time.time() - start_time
+            remaining = timeout - elapsed
+
+            if remaining > 0:
+                wait_time = min(CI_POLL_INTERVAL, remaining)
+                logger.info(
+                    f"CI pending, waiting... ({int(elapsed)}s elapsed, "
+                    f"{int(remaining)}s remaining)"
+                )
+                time.sleep(wait_time)
+
+        logger.warning(f"CI wait timeout after {timeout}s, proceeding anyway")
+        return "timeout"
 
     def process_issue(self, issue_number: int) -> CycleResult:
         """Process an issue through the full SDLC cycle.
@@ -78,8 +130,10 @@ class SDLCOrchestrator:
         for iteration in range(1, self.max_iterations + 1):
             logger.info(f"Review iteration {iteration}/{self.max_iterations}")
 
-            # Wait for CI (in real scenario, this would be webhook-driven)
-            # For now, we proceed immediately
+            # Wait for CI to complete before review
+            logger.info("Waiting for CI to complete...")
+            ci_status = self.wait_for_ci(pr_number)
+            logger.info(f"CI status: {ci_status}")
 
             # Reviewer Agent reviews
             logger.info("Reviewer Agent analyzing PR...")

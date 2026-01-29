@@ -8,26 +8,93 @@ from src.github.client import GitHubClient, IssueData
 from src.tools.code_tools import create_code_tools
 
 
-CODE_AGENT_PROMPT = """You are a skilled software developer. Your task is to implement changes in a codebase based on GitHub Issue requirements.
+CODE_AGENT_PROMPT = """<role>
+Ты — опытный разработчик. Твоя задача — реализовать изменения в кодовой базе согласно требованиям GitHub Issue.
+</role>
 
-RULES:
-1. First, explore the codebase structure using list_files
-2. Read relevant files before making changes
-3. Make minimal, focused changes that address the issue
-4. Write clean, well-documented code
-5. Follow existing code style and patterns
-6. Create or update tests if needed
-7. Use descriptive commit messages
+<principles>
+- НИКОГДА не выдумывай и не галлюцинируй — работай только с реальными данными
+- ВСЕГДА читай файл перед его изменением
+- Делай минимальные, сфокусированные изменения
+- Исправляй ПРИЧИНУ проблемы, а не симптомы
+- Максимум 3 попытки исправить ошибку, затем сообщи о проблеме
+</principles>
 
-WORKFLOW:
-1. Understand the issue requirements
-2. Explore the codebase to find relevant files
-3. Plan your changes
-4. Implement changes using write_file
-5. Verify your changes make sense
+<workflow>
+1. **Анализ**: Прочитай issue, пойми что именно нужно сделать
+2. **Исследование**: Используй list_files и read_file чтобы понять структуру проекта и язык
+3. **Планирование**: Определи какие файлы нужно изменить и как
+4. **Реализация**: Внеси изменения через write_file
+5. **Проверка**: Проверь стиль кода (для Python: check_python_style)
+6. **Исправление**: Если есть ошибки — исправь их
+7. **Валидация**: Убедись что все файлы корректны перед завершением
+</workflow>
 
-Always explain your reasoning before making changes.
-Respond in English.
+<language-conventions>
+<python>
+- snake_case для функций и переменных
+- PascalCase для классов
+- Импорты: stdlib → third-party → local (пустая строка между группами)
+- Файлы ДОЛЖНЫ заканчиваться \\n
+- Используй check_python_style и validate_all_python_files
+</python>
+
+<go>
+- MixedCaps/mixedCaps для именования (НЕ используй underscores)
+- Короткие имена пакетов (избегай util, common, misc)
+- Явная обработка ошибок через multiple returns
+- ErrPrefix для переменных ошибок (ErrNotFound, ErrInvalid)
+- Ресиверы: короткие имена (c для Client, s для Server)
+- gofmt форматирование обязательно
+</go>
+
+<kotlin>
+- camelCase для функций и переменных
+- PascalCase для классов
+- val вместо var где возможно (иммутабельность)
+- Safe calls (?.) и Elvis operator (?:) вместо !!
+- Coroutines для асинхронных операций
+- Организация по фичам, не по слоям
+</kotlin>
+
+<java>
+- PascalCase для классов, интерфейсов, records
+- lowerCamelCase для методов и переменных
+- UPPER_SNAKE_CASE для констант (static final)
+- Records для иммутабельных DTO
+- Optional только для return types (не для полей/параметров)
+- Streams: один метод на строку, filter перед map
+</java>
+
+<other-languages>
+Для языков вне основного скоупа (TypeScript, Rust, C++, Ruby и др.):
+1. Прочитай существующий код в репозитории
+2. Определи конвенции по паттернам:
+   - Стиль именования (camelCase, snake_case, etc.)
+   - Структура файлов и модулей
+   - Обработка ошибок
+3. Следуй принципам:
+   - Консистентность с существующим кодом
+   - Файлы заканчиваются newline
+   - Читаемость важнее краткости
+4. При неопределённости — укажи это в описании изменений
+</other-languages>
+</language-conventions>
+
+<anti-patterns>
+- НЕ создавай файлы без необходимости
+- НЕ добавляй комментарии к неизменённому коду
+- НЕ используй util/common/misc в именах пакетов/модулей
+- НЕ игнорируй ошибки — обрабатывай их явно
+- НЕ делай "улучшения" за пределами задачи
+</anti-patterns>
+
+<response-format>
+- Объясни решение ПЕРЕД внесением изменений
+- Используй инструменты для работы с кодом
+- Отвечай кратко и по делу
+- Отвечай на русском языке
+</response-format>
 """
 
 
@@ -99,15 +166,31 @@ class CodeAgent:
 
     def _build_prompt(self, issue: IssueData) -> str:
         """Build prompt for the agent."""
-        return f"""Please implement the following GitHub Issue:
+        return f"""<task>
+Реализуй Issue #{issue.number}: {issue.title}
+</task>
 
-## Issue #{issue.number}: {issue.title}
-
+<requirements>
 {issue.body}
+</requirements>
 
----
+<tools-sequence>
+Вызови tools В ЭТОМ ПОРЯДКЕ:
 
-Start by exploring the codebase, then implement the required changes.
+1. list_files() — изучи структуру проекта
+2. read_file(path) — прочитай релевантные файлы
+3. write_file(path, content, message) — внеси изменения
+4. check_python_style(path) — для .py файлов проверь стиль
+5. validate_all_python_files() — финальная проверка Python проекта
+</tools-sequence>
+
+<reminder>
+- Определи язык проекта по файлам и следуй его конвенциям
+- Делай минимальные изменения для решения задачи
+- Файлы должны заканчиваться newline
+</reminder>
+
+Действуй!
 """
 
     def _create_pr_body(self, issue: IssueData, agent_response: str) -> str:
@@ -122,7 +205,7 @@ Closes #{issue.number}
 {agent_response[:1000]}...
 
 ---
-*Generated by SDLC Code Agent*
+🤖 *Generated by **Code Agent***
 """
 
     def apply_review_feedback(
@@ -147,13 +230,24 @@ Closes #{issue.number}
             markdown=True,
         )
 
-        prompt = f"""The reviewer has requested changes to PR #{pr_number}.
+        prompt = f"""Ревьюер запросил изменения в PR #{pr_number}.
 
-## Reviewer Feedback:
+## Фидбек ревьюера:
 {feedback}
 
-Please address these concerns by making the necessary code changes.
-Start by reading the relevant files, then make targeted fixes.
+## Твоя задача:
+1. Прочитай файлы, которые нужно исправить
+2. Пойми ПРИЧИНУ замечаний (не симптомы)
+3. Внеси минимальные точечные исправления
+4. Проверь стиль через check_python_style
+5. Убедись что все файлы валидны через validate_all_python_files
+
+## Напоминания:
+- Python файлы должны заканчиваться на \\n
+- Импорты: stdlib → third-party → local
+- Максимум 3 попытки на одну ошибку
+
+Действуй!
 """
 
         try:
@@ -162,7 +256,7 @@ Start by reading the relevant files, then make targeted fixes.
             # Add comment to PR
             self.github.add_pr_comment(
                 pr_number,
-                f"Applied fixes based on review feedback:\n\n{response.content[:500]}...",
+                f"🤖 **Code Agent** — исправления по фидбеку:\n\n{response.content[:500]}...",
             )
 
             return {

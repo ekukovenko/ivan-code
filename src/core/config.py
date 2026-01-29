@@ -28,6 +28,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 # Agent Configuration
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
+CI_WAIT_TIMEOUT = int(os.getenv("CI_WAIT_TIMEOUT", "300"))  # seconds, 0 = no wait
 
 
 # Provider URLs (OpenAI-compatible)
@@ -94,6 +95,10 @@ class Settings:
     @property
     def max_iterations(self) -> int:
         return MAX_ITERATIONS
+
+    @property
+    def ci_wait_timeout(self) -> int:
+        return CI_WAIT_TIMEOUT
 
 
 def get_settings() -> Settings:
