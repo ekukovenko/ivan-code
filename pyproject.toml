@@ -1,15 +1,38 @@
 [project]
-name = "mega-ai-itmo"
+name = "sdlc-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered SDLC automation with Code Agent and Reviewer Agent"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
-    "dotenv>=0.9.9",
-    "langchain>=1.2.7",
-    "langchain-openai>=1.1.7",
     "agno>=1.1.0",
-    "textual>=4.0.0",
-    "textual-autocomplete>=3.0.0",
-    "sqlalchemy>=2.0.46",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+    "pygithub>=2.5.0",
+    "gitpython>=3.1.0",
+    "python-dotenv>=1.0.0",
+    "textual>=1.0.0",
+    "rich>=13.0.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[project.scripts]
+sdlc-agent = "src.cli:main"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
