@@ -27,7 +27,7 @@ def get_langfuse():
             _langfuse_client = Langfuse(
                 public_key=settings.langfuse_public_key,
                 secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host,
+                base_url=settings.langfuse_host,
             )
         except Exception as e:
             print(f"Warning: Failed to initialize LangFuse: {e}")
@@ -50,7 +50,7 @@ def trace_agent_run(
         metadata: Additional metadata to attach to the trace
 
     Yields:
-        LangFuse trace object or None if tracing is disabled
+        LangFuse span object or None if tracing is disabled
     """
     langfuse = get_langfuse()
 
@@ -58,16 +58,21 @@ def trace_agent_run(
         yield None
         return
 
-    trace = langfuse.trace(
+    # Use start_span for tracing (new LangFuse API)
+    span = langfuse.start_span(
         name=f"{agent_name}_run",
-        session_id=session_id,
-        metadata=metadata or {},
+        metadata={
+            "session_id": session_id,
+            **(metadata or {}),
+        },
     )
 
     try:
-        yield trace
+        yield span
     finally:
-        # Flush to ensure trace is sent
+        # End span and flush
+        if span:
+            span.end()
         langfuse.flush()
 
 
@@ -82,7 +87,7 @@ def log_agent_generation(
     """Log a generation (LLM call) to the trace.
 
     Args:
-        trace: LangFuse trace object
+        trace: LangFuse span object
         name: Name of the generation step
         input_text: Input prompt
         output_text: Model output
@@ -92,7 +97,11 @@ def log_agent_generation(
     if trace is None:
         return
 
-    trace.generation(
+    langfuse = get_langfuse()
+    if langfuse is None:
+        return
+
+    langfuse.start_generation(
         name=name,
         input=input_text,
         output=output_text,
@@ -110,7 +119,7 @@ def log_tool_call(
     """Log a tool call to the trace.
 
     Args:
-        trace: LangFuse trace object
+        trace: LangFuse span object
         tool_name: Name of the tool
         input_args: Tool input arguments
         output: Tool output
@@ -118,11 +127,17 @@ def log_tool_call(
     if trace is None:
         return
 
-    trace.span(
+    langfuse = get_langfuse()
+    if langfuse is None:
+        return
+
+    span = langfuse.start_span(
         name=f"tool_{tool_name}",
         input=input_args,
         output=str(output) if output else None,
     )
+    if span:
+        span.end()
 
 
 def flush_traces() -> None:
