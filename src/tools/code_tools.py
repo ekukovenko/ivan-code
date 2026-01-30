@@ -1,5 +1,6 @@
 """Tools for Code Agent - file operations and code generation."""
 
+import re
 from agno.tools import tool
 
 from src.github.client import GitHubClient
@@ -7,6 +8,126 @@ from src.github.client import GitHubClient
 
 def create_code_tools(github_client: GitHubClient, branch: str):
     """Create tools for Code Agent with GitHub context."""
+
+    @tool
+    def check_python_style(path: str) -> str:
+        """Check a Python file for common style issues BEFORE committing.
+
+        IMPORTANT: Always run this on Python files after writing them!
+
+        Checks for:
+        - Missing trailing newline (W292)
+        - Import sorting issues (I001)
+        - Basic syntax issues
+
+        Args:
+            path: Path to the Python file to check
+        """
+        content = github_client.get_file_content(path, ref=branch)
+        if content is None:
+            return f"Error: File '{path}' not found"
+
+        issues = []
+
+        # Check trailing newline (W292)
+        if content and not content.endswith('\n'):
+            issues.append(f"W292: No newline at end of file - add empty line at the end")
+
+        # Check import sorting (I001) - basic check
+        lines = content.split('\n')
+        import_lines = []
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.startswith('import ') or stripped.startswith('from '):
+                import_lines.append((i, stripped))
+            elif stripped and not stripped.startswith('#') and not stripped.startswith('"""') and not stripped.startswith("'''"):
+                if import_lines:
+                    break  # End of import block
+
+        if import_lines:
+            # Check import order: stdlib -> third-party -> local
+            stdlib_imports = []
+            third_party_imports = []
+            local_imports = []
+
+            STDLIB_MODULES = {'os', 'sys', 're', 'json', 'logging', 'typing', 'enum',
+                           'datetime', 'collections', 'functools', 'pathlib', 'unittest',
+                           'asyncio', 'contextlib', 'dataclasses', 'abc', 'io', 'time'}
+
+            for line_num, imp in import_lines:
+                # Extract module name
+                if imp.startswith('from '):
+                    module = imp.split()[1].split('.')[0]
+                else:
+                    module = imp.split()[1].split('.')[0]
+
+                if module in STDLIB_MODULES:
+                    stdlib_imports.append((line_num, imp, 'stdlib'))
+                elif module.startswith('app') or module.startswith('src') or module.startswith('.'):
+                    local_imports.append((line_num, imp, 'local'))
+                else:
+                    third_party_imports.append((line_num, imp, 'third-party'))
+
+            # Check order
+            all_imports = stdlib_imports + third_party_imports + local_imports
+            actual_order = [imp[0] for imp in import_lines]
+            expected_order = [imp[0] for imp in all_imports]
+
+            if actual_order != sorted(actual_order) or actual_order != expected_order:
+                issues.append(f"I001: Import block may be un-sorted. Correct order: stdlib -> third-party -> local")
+                if stdlib_imports:
+                    issues.append(f"  Stdlib imports: {[i[1] for i in stdlib_imports]}")
+                if third_party_imports:
+                    issues.append(f"  Third-party imports: {[i[1] for i in third_party_imports]}")
+                if local_imports:
+                    issues.append(f"  Local imports: {[i[1] for i in local_imports]}")
+
+        # Check for basic Python syntax issues
+        try:
+            compile(content, path, 'exec')
+        except SyntaxError as e:
+            issues.append(f"SyntaxError at line {e.lineno}: {e.msg}")
+
+        if issues:
+            return "Style issues found:\n" + "\n".join(issues)
+        return f"OK: {path} passes style checks"
+
+    @tool
+    def validate_all_python_files() -> str:
+        """Check ALL Python files in the repository for style issues.
+
+        Run this before considering your work complete!
+        """
+        try:
+            files = github_client.list_files(ref=branch)
+            python_files = [f for f in files if f.endswith('.py')]
+
+            all_issues = []
+            for path in python_files:
+                content = github_client.get_file_content(path, ref=branch)
+                if content is None:
+                    continue
+
+                file_issues = []
+
+                # Check trailing newline
+                if content and not content.endswith('\n'):
+                    file_issues.append("W292: No newline at end of file")
+
+                # Check syntax
+                try:
+                    compile(content, path, 'exec')
+                except SyntaxError as e:
+                    file_issues.append(f"SyntaxError: line {e.lineno}: {e.msg}")
+
+                if file_issues:
+                    all_issues.append(f"{path}:\n  " + "\n  ".join(file_issues))
+
+            if all_issues:
+                return "Issues found:\n\n" + "\n\n".join(all_issues)
+            return f"OK: All {len(python_files)} Python files pass basic checks"
+        except Exception as e:
+            return f"Error: {e}"
 
     @tool
     def read_file(path: str) -> str:
@@ -30,6 +151,11 @@ def create_code_tools(github_client: GitHubClient, branch: str):
             message: Commit message
         """
         try:
+            # Auto-fix: ensure trailing newline for text files
+            if path.endswith(('.py', '.txt', '.md', '.json', '.yaml', '.yml', '.toml')):
+                if content and not content.endswith('\n'):
+                    content = content + '\n'
+
             github_client.create_or_update_file(path, content, message, branch)
             return f"Successfully wrote to {path}"
         except Exception as e:
@@ -94,4 +220,12 @@ def create_code_tools(github_client: GitHubClient, branch: str):
         except Exception as e:
             return f"Error searching: {e}"
 
-    return [read_file, write_file, delete_file, list_files, search_in_files]
+    return [
+        read_file,
+        write_file,
+        delete_file,
+        list_files,
+        search_in_files,
+        check_python_style,
+        validate_all_python_files,
+    ]

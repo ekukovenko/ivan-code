@@ -197,11 +197,14 @@ class GitHubClient:
         # Also check GitHub Actions check runs
         check_runs = commit.get_check_runs()
         for run in check_runs:
+            description = ""
+            if run.output and hasattr(run.output, "summary"):
+                description = run.output.summary or ""
             checks.append(
                 {
                     "name": run.name,
                     "state": run.conclusion or run.status,
-                    "description": run.output.get("summary", "") if run.output else "",
+                    "description": description,
                 }
             )
 
