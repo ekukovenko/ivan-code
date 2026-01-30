@@ -1,16 +1,19 @@
-FROM python:3.11-slim
+FROM python:3.11
 
 WORKDIR /app
 
-# Install git (needed for GitPython)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# python:3.11 (non-slim) already has git installed
 
-# Install dependencies
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
+# Install dependencies from requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY src/ src/
+COPY pyproject.toml .
+
+# Set PYTHONPATH so src module is importable
+ENV PYTHONPATH=/app
 
 # Expose webhook port
 EXPOSE 8080

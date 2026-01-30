@@ -15,6 +15,7 @@ dependencies = [
     "textual>=1.0.0",
     "rich>=13.0.0",
     "langfuse>=2.0.0",
+    "ruff>=0.8.0",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
+    "deepeval>=3.0.0",
 ]
 
 [project.scripts]

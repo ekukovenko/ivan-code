@@ -39,6 +39,44 @@ SECURITY_PATTERNS = {
 }
 
 
+def normalize_python_code(content: str) -> str:
+    """Format Python code using ruff for CI compatibility."""
+    import subprocess
+    import tempfile
+    import os
+
+    # Ensure trailing newline first
+    if content and not content.endswith('\n'):
+        content = content + '\n'
+
+    try:
+        # Write to temp file, format with ruff, read back
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+
+        # Run ruff format
+        subprocess.run(
+            ['ruff', 'format', temp_path],
+            capture_output=True,
+            timeout=10
+        )
+
+        # Read formatted content
+        with open(temp_path, 'r') as f:
+            formatted = f.read()
+
+        os.unlink(temp_path)
+        return formatted
+
+    except Exception:
+        # Fallback: basic normalization if ruff fails
+        lines = content.split('\n')
+        normalized = [line.rstrip() for line in lines]
+        result = '\n'.join(normalized)
+        return result.rstrip('\n') + '\n'
+
+
 def check_security_issues(content: str, filename: str = "") -> list[dict]:
     """Check content for security vulnerabilities."""
     issues = []
@@ -207,8 +245,11 @@ def create_code_tools(github_client: GitHubClient, branch: str):
             message: Commit message
         """
         try:
-            # Auto-fix: ensure trailing newline for text files
-            if path.endswith(('.py', '.txt', '.md', '.json', '.yaml', '.yml', '.toml')):
+            # Auto-fix Python files for ruff format compatibility
+            if path.endswith('.py'):
+                content = normalize_python_code(content)
+            # Ensure trailing newline for other text files
+            elif path.endswith(('.txt', '.md', '.json', '.yaml', '.yml', '.toml')):
                 if content and not content.endswith('\n'):
                     content = content + '\n'
 

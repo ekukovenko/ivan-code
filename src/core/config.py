@@ -47,7 +47,7 @@ BASE_URLS = {
 
 # Default models per provider
 DEFAULT_MODELS = {
-    "openrouter": "google/gemini-2.5-flash",
+    "openrouter": "google/gemini-2.5-pro-preview",
     "openai": "gpt-4o-mini",
     "groq": "llama-3.3-70b-versatile",
     "mistral": "mistral-small-latest",

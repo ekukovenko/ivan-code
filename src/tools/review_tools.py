@@ -34,11 +34,19 @@ def create_review_tools(github_client: GitHubClient, pr_number: int, review_stat
         except Exception as e:
             return f"Error getting files: {e}"
 
+    # Capture pr_number from closure before defining tool
+    _pr_number = pr_number
+
     @tool
-    def get_ci_status() -> str:
-        """Get CI/CD status for the PR."""
+    def get_ci_status(pr_number: int | None = None) -> str:
+        """Get CI/CD status for the current PR.
+
+        Args:
+            pr_number: Optional, ignored (uses PR from context)
+        """
         try:
-            status = github_client.get_pr_ci_status(pr_number)
+            # Always use closure value, ignore parameter
+            status = github_client.get_pr_ci_status(_pr_number)
             result = [f"Overall status: {status.status}\n\nChecks:"]
             for check in status.checks:
                 result.append(f"  - {check['name']}: {check['state']}")
@@ -126,20 +134,21 @@ def create_review_tools(github_client: GitHubClient, pr_number: int, review_stat
                     review_state["decision"] = decision.upper()
                 return f"Review submitted: {decision}"
             except Exception as e:
-                # GitHub doesn't allow approving own PRs - fallback to COMMENT
-                if "approve your own" in str(e).lower() and event == "APPROVE":
-                    marked_summary = f"👀 **Reviewer Agent** ✅ APPROVED\n\n{summary}\n\n---\n*Статус: APPROVE (отправлено как COMMENT из-за ограничений GitHub)*"
+                # GitHub doesn't allow approving/requesting changes on own PRs - fallback to COMMENT
+                if event in ("APPROVE", "REQUEST_CHANGES"):
+                    status_emoji = "✅" if event == "APPROVE" else "❌"
+                    marked_summary = f"👀 **Reviewer Agent** {status_emoji} {event}\n\n{summary}\n\n---\n*Статус: {event} (отправлено как COMMENT из-за ограничений GitHub)*"
                     github_client.create_pr_review(
                         pr_number=pr_number,
                         body=marked_summary,
                         event="COMMENT",
                         comments=inline_comments if inline_comments else None,
                     )
-                    # Track successful submission (APPROVE via COMMENT fallback)
+                    # Track successful submission via COMMENT fallback
                     if review_state is not None:
                         review_state["submitted"] = True
-                        review_state["decision"] = "APPROVE"
-                    return f"Review submitted: APPROVE (as COMMENT due to GitHub limitation)"
+                        review_state["decision"] = event
+                    return f"Review submitted: {event} (as COMMENT due to GitHub limitation)"
                 raise
         except Exception as e:
             return f"Error submitting review: {e}"

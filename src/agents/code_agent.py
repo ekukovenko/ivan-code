@@ -189,18 +189,30 @@ class CodeAgent:
                     model=self.model,
                 )
 
-                # Create PR
-                pr_number = self.github.create_pull_request(
-                    title=f"Fix #{issue_number}: {issue.title}",
-                    body=self._create_pr_body(issue, response.content),
-                    head=branch_name,
-                )
+                # Create PR (or find existing one)
+                try:
+                    pr_number = self.github.create_pull_request(
+                        title=f"Fix #{issue_number}: {issue.title}",
+                        body=self._create_pr_body(issue, response.content),
+                        head=branch_name,
+                    )
+                    pr_message = "PR created successfully"
+                except Exception as pr_error:
+                    # Check if PR already exists
+                    if "already exists" in str(pr_error).lower():
+                        pr_number = self._find_existing_pr(branch_name)
+                        if pr_number:
+                            pr_message = f"Using existing PR #{pr_number}"
+                        else:
+                            raise pr_error
+                    else:
+                        raise pr_error
 
                 return {
                     "success": True,
                     "pr_number": pr_number,
                     "branch": branch_name,
-                    "message": "PR created successfully",
+                    "message": pr_message,
                 }
             except Exception as e:
                 return {
@@ -209,6 +221,16 @@ class CodeAgent:
                     "branch": branch_name,
                     "message": f"Error: {str(e)}",
                 }
+
+    def _find_existing_pr(self, branch_name: str) -> int | None:
+        """Find existing PR for a branch."""
+        try:
+            pulls = self.github.repo.get_pulls(state='open', head=f"{self.github.repo.owner.login}:{branch_name}")
+            for pr in pulls:
+                return pr.number
+        except Exception:
+            pass
+        return None
 
     def _build_prompt(self, issue: IssueData) -> str:
         """Build prompt for the agent."""

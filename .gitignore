@@ -46,3 +46,11 @@ Thumbs.db
 workspace/
 *.db
 *.log
+
+# DeepEval
+.deepeval/
+
+# Temp files
+plan.md
+*.png
+Pasted image*

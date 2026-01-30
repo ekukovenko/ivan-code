@@ -122,9 +122,6 @@ class ReviewerAgent:
         self.model = model or settings.default_model
         self.api_key = settings.llm_api_key
 
-        # Agent instance cache for session memory
-        self._agents: dict[str, Agent] = {}
-
     def review_pr(self, pr_number: int, issue_number: int | None = None) -> dict:
         """Review a pull request.
 
@@ -144,21 +141,19 @@ class ReviewerAgent:
         # Create tools with PR context and state tracking
         tools = create_review_tools(self.github, pr_number, review_state)
 
-        # Create or get agent with session memory and reasoning
-        if session_id not in self._agents:
-            self._agents[session_id] = Agent(
-                model=OpenRouter(id=self.model, api_key=self.api_key),
-                tools=tools,
-                instructions=REVIEWER_AGENT_PROMPT,
-                session_id=session_id,
-                markdown=True,
-                # Enable step-by-step reasoning for thorough review
-                reasoning=True,
-                reasoning_min_steps=1,
-                reasoning_max_steps=5,
-            )
-
-        agent = self._agents[session_id]
+        # Always create fresh agent to ensure tools have correct review_state
+        # (caching causes stale tools with old review_state reference)
+        agent = Agent(
+            model=OpenRouter(id=self.model, api_key=self.api_key),
+            tools=tools,
+            instructions=REVIEWER_AGENT_PROMPT,
+            session_id=session_id,
+            markdown=True,
+            # Enable step-by-step reasoning for thorough review
+            reasoning=True,
+            reasoning_min_steps=1,
+            reasoning_max_steps=5,
+        )
 
         # Build prompt
         prompt = self._build_prompt(pr_number, issue_number)
@@ -203,9 +198,13 @@ class ReviewerAgent:
 
     def _fallback_post_review(self, pr_number: int, decision: str, summary: str) -> None:
         """Post review to GitHub when LLM didn't call submit_review."""
+        import logging
+        logger = logging.getLogger(__name__)
+
         try:
             marked_summary = f"**Reviewer Agent** (fallback)\n\n{summary}"
             event = decision.upper()
+            logger.info(f"Posting fallback review to PR #{pr_number}: {event}")
 
             try:
                 self.github.create_pr_review(
@@ -213,17 +212,24 @@ class ReviewerAgent:
                     body=marked_summary,
                     event=event,
                 )
+                logger.info(f"Fallback review posted successfully")
             except Exception as e:
-                # GitHub doesn't allow approving own PRs
-                if "approve your own" in str(e).lower() and event == "APPROVE":
-                    marked_summary = f"**Reviewer Agent** APPROVED (fallback)\n\n{summary}\n\n---\n*Статус: APPROVE (отправлено как COMMENT из-за ограничений GitHub)*"
+                logger.warning(f"Failed to post review as {event}: {e}")
+                # GitHub doesn't allow approving/requesting changes on own PRs
+                # Fallback: post as COMMENT with status marker
+                if event in ("APPROVE", "REQUEST_CHANGES"):
+                    status_emoji = "✅" if event == "APPROVE" else "❌"
+                    marked_summary = f"**Reviewer Agent** {status_emoji} {event} (fallback)\n\n{summary}\n\n---\n*Статус: {event} (отправлено как COMMENT из-за ограничений GitHub)*"
                     self.github.create_pr_review(
                         pr_number=pr_number,
                         body=marked_summary,
                         event="COMMENT",
                     )
-        except Exception:
-            pass  # Ignore fallback errors to not break the flow
+                    logger.info(f"Fallback review posted as COMMENT ({event} workaround)")
+                else:
+                    raise
+        except Exception as e:
+            logger.error(f"Fallback review failed completely: {e}")
 
     def _build_prompt(self, pr_number: int, issue_number: int | None) -> str:
         """Build review prompt."""

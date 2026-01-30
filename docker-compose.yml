@@ -1,18 +1,31 @@
-version: "3.8"
-
 services:
   sdlc-agent:
     build: .
     ports:
       - "8080:8080"
     environment:
+      # LLM Configuration
       - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
       - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-google/gemini-2.5-flash}
+      - LLM_MODEL=${LLM_MODEL:-anthropic/claude-3.5-sonnet}
+      # GitHub Configuration
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      # Agent Configuration
       - MAX_ITERATIONS=${MAX_ITERATIONS:-5}
+      - CI_WAIT_TIMEOUT=${CI_WAIT_TIMEOUT:-300}
+      # LangFuse (optional)
+      - LANGFUSE_ENABLED=${LANGFUSE_ENABLED:-false}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
     restart: unless-stopped
     volumes:
       - ./workspace:/app/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

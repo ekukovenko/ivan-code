@@ -3,6 +3,7 @@
 import argparse
 import sys
 import os
+import logging
 
 # Add src to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,6 +13,55 @@ from src.core.orchestrator import SDLCOrchestrator
 from src.github.client import GitHubClient
 from src.agents.code_agent import CodeAgent
 from src.agents.reviewer_agent import ReviewerAgent
+
+# Configure logging to be less verbose by default
+logging.basicConfig(level=logging.WARNING, format='%(message)s')
+
+
+def handle_error(e: Exception, context: str = "") -> None:
+    """Handle errors with user-friendly messages."""
+    error_type = type(e).__name__
+
+    # GitHub errors
+    if "UnknownObjectException" in error_type or "404" in str(e):
+        print(f"\n❌ Error: {context} not found")
+        print("   Check that the issue/PR number exists and you have access to the repository")
+        sys.exit(1)
+
+    if "BadCredentialsException" in error_type or "401" in str(e):
+        print("\n❌ Error: Invalid GitHub token")
+        print("   Check your GITHUB_TOKEN in .env file")
+        sys.exit(1)
+
+    if "403" in str(e) and "rate limit" in str(e).lower():
+        print("\n❌ Error: GitHub API rate limit exceeded")
+        print("   Wait a few minutes and try again")
+        sys.exit(1)
+
+    if "403" in str(e):
+        print("\n❌ Error: Access denied")
+        print("   Check that your GITHUB_TOKEN has the required permissions")
+        sys.exit(1)
+
+    # LLM errors
+    if "api" in str(e).lower() and ("key" in str(e).lower() or "auth" in str(e).lower()):
+        print("\n❌ Error: LLM API authentication failed")
+        print("   Check your LLM_API_KEY in .env file")
+        sys.exit(1)
+
+    if "timeout" in str(e).lower() or "connection" in str(e).lower():
+        print("\n❌ Error: Connection timeout")
+        print("   Check your internet connection and try again")
+        sys.exit(1)
+
+    # Generic error
+    print(f"\n❌ Error: {e}")
+    if os.getenv("DEBUG"):
+        import traceback
+        traceback.print_exc()
+    else:
+        print("   Set DEBUG=1 for full traceback")
+    sys.exit(1)
 
 
 def main():
@@ -94,17 +144,20 @@ def run_issue(issue_number: int):
     print(f"Processing Issue #{issue_number}")
     print(f"{'='*50}\n")
 
-    orchestrator = SDLCOrchestrator()
-    result = orchestrator.process_issue(issue_number)
+    try:
+        orchestrator = SDLCOrchestrator()
+        result = orchestrator.process_issue(issue_number)
 
-    print(f"\n{'='*50}")
-    print("SDLC Cycle Complete")
-    print(f"{'='*50}")
-    print(f"Success: {result.success}")
-    print(f"PR Number: {result.pr_number}")
-    print(f"Iterations: {result.iterations}")
-    print(f"Final Decision: {result.final_decision}")
-    print(f"Message: {result.message}")
+        print(f"\n{'='*50}")
+        print("SDLC Cycle Complete")
+        print(f"{'='*50}")
+        print(f"Success: {result.success}")
+        print(f"PR Number: {result.pr_number}")
+        print(f"Iterations: {result.iterations}")
+        print(f"Final Decision: {result.final_decision}")
+        print(f"Message: {result.message}")
+    except Exception as e:
+        handle_error(e, f"Issue #{issue_number}")
 
 
 def run_code(issue_number: int):
@@ -113,16 +166,19 @@ def run_code(issue_number: int):
     print(f"Code Agent - Issue #{issue_number}")
     print(f"{'='*50}\n")
 
-    agent = CodeAgent()
-    result = agent.process_issue(issue_number)
+    try:
+        agent = CodeAgent()
+        result = agent.process_issue(issue_number)
 
-    print(f"\n{'='*50}")
-    print("Code Agent Complete")
-    print(f"{'='*50}")
-    print(f"Success: {result['success']}")
-    print(f"PR Number: {result['pr_number']}")
-    print(f"Branch: {result['branch']}")
-    print(f"Message: {result['message']}")
+        print(f"\n{'='*50}")
+        print("Code Agent Complete")
+        print(f"{'='*50}")
+        print(f"Success: {result['success']}")
+        print(f"PR Number: {result['pr_number']}")
+        print(f"Branch: {result['branch']}")
+        print(f"Message: {result['message']}")
+    except Exception as e:
+        handle_error(e, f"Issue #{issue_number}")
 
 
 def run_review(pr_number: int, issue_number: int | None):
@@ -131,15 +187,18 @@ def run_review(pr_number: int, issue_number: int | None):
     print(f"Reviewer Agent - PR #{pr_number}")
     print(f"{'='*50}\n")
 
-    agent = ReviewerAgent()
-    result = agent.review_pr(pr_number, issue_number)
+    try:
+        agent = ReviewerAgent()
+        result = agent.review_pr(pr_number, issue_number)
 
-    print(f"\n{'='*50}")
-    print("Review Complete")
-    print(f"{'='*50}")
-    print(f"Decision: {result['decision']}")
-    print(f"Needs Changes: {result['needs_changes']}")
-    print(f"\nSummary:\n{result['summary']}")
+        print(f"\n{'='*50}")
+        print("Review Complete")
+        print(f"{'='*50}")
+        print(f"Decision: {result['decision']}")
+        print(f"Needs Changes: {result['needs_changes']}")
+        print(f"\nSummary:\n{result['summary']}")
+    except Exception as e:
+        handle_error(e, f"PR #{pr_number}")
 
 
 def run_server(host: str, port: int):

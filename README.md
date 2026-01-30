@@ -1,132 +1,196 @@
 # SDLC Agent
 
-AI-powered SDLC automation system with Code Agent and Reviewer Agent.
+Автоматизированная агентная система для полного цикла разработки ПО (SDLC) внутри GitHub.
 
-## Features
+Система имитирует работу разработчика и ревьюера: анализирует задачи из Issues, вносит изменения в код, создаёт Pull Request, запускает CI/CD, анализирует результаты и принимает решение о завершении или повторе цикла.
 
-- **Code Agent**: Reads GitHub Issues, generates code fixes, creates Pull Requests
-- **Reviewer Agent**: Analyzes PRs, checks CI status, provides code review
-- **Iterative cycle**: Automatically addresses review feedback
-- **Multiple LLM providers**: OpenRouter, OpenAI, Groq, Mistral, Anthropic
-- **Webhook support**: Real-time GitHub event processing
-- **Docker support**: Easy deployment
-
-## Architecture
+## Основной сценарий работы
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     GitHub Repository                        │
-│  Issue → PR → CI → Review → Fix → Review → Approve/Merge    │
-└─────────────────────────────────────────────────────────────┘
-              │                        │
-              ▼                        ▼
-       ┌─────────────┐         ┌─────────────────┐
-       │ Code Agent  │◄───────►│ Reviewer Agent  │
-       │  (Isolated) │         │   (Isolated)    │
-       └─────────────┘         └─────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Issue        2. Code Agent      3. PR + CI                  │
+│  создан    ──►   генерирует код ──► создан                      │
+│                                         │                       │
+│  6. Merge   ◄──  5. APPROVE   ◄──  4. Reviewer Agent            │
+│  ready           или                    анализирует             │
+│                  REQUEST_CHANGES ──► Code Agent исправляет ─┐   │
+│                                                             │   │
+│                  ◄──────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+1. Пользователь создаёт Issue с описанием задачи (label: `auto-fix`)
+2. **Code Agent** анализирует требования, генерирует код, создаёт PR
+3. Автоматически запускается CI/CD pipeline (linting, tests)
+4. **Reviewer Agent** анализирует изменения, проверяет CI, сравнивает с Issue
+5. Результат публикуется в PR как code review
+6. При `REQUEST_CHANGES` — Code Agent исправляет, цикл повторяется
+7. При `APPROVE` — PR готов к merge
 
-### 1. Configuration
+## Архитектура
 
-Copy `.env.example` to `.env` and configure:
+### Code Agent
+
+- Получает и парсит текст Issue
+- Анализирует требования задачи
+- Генерирует и модифицирует код
+- Автоматически форматирует через `ruff format`
+- Создаёт Pull Request
+- Исправляет код по замечаниям Reviewer Agent
+
+### Reviewer Agent
+
+- Анализирует diff в Pull Request
+- Проверяет результаты CI jobs
+- Сравнивает реализацию с требованиями Issue
+- Проверяет код на уязвимости (OWASP)
+- Публикует результаты в PR (APPROVE / REQUEST_CHANGES / COMMENT)
+
+## Технические требования
+
+- **Python**: 3.11+
+- **LLM**: OpenRouter (Gemini, Claude), OpenAI, Groq, Mistral
+- **GitHub**: PyGithub для API
+- **Качество кода**: ruff, pytest
+- **CI/CD**: GitHub Actions
+- **Контейнеризация**: Docker, docker-compose
+
+## Быстрый старт
+
+### Запуск через Docker (рекомендуется)
 
 ```bash
+# 1. Клонировать репозиторий
+git clone https://github.com/ekukovenko/mega-ai-agent-coding.git
+cd mega-ai-agent-coding
+
+# 2. Настроить переменные окружения
 cp .env.example .env
-```
+# Отредактировать .env: LLM_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 
-Required variables:
-- `LLM_API_KEY`: Your API key (OpenRouter recommended)
-- `GITHUB_TOKEN`: GitHub Personal Access Token
-- `GITHUB_REPO`: Target repository (owner/repo format)
-
-### 2. Installation
-
-```bash
-# Install dependencies
-pip install -e .
-
-# Or use Docker
+# 3. Запустить
 docker-compose up -d
 ```
 
-### 3. Usage
-
-#### CLI Commands
+### Запуск локально
 
 ```bash
-# Process issue through full SDLC cycle
+# 1. Установить зависимости
+pip install -e .
+
+# 2. Настроить .env
+cp .env.example .env
+
+# 3. Запустить обработку Issue
 python -m src.cli issue 42
+```
 
-# Run Code Agent only
-python -m src.cli code 42
+### Переменные окружения
 
-# Run Reviewer Agent only
-python -m src.cli review 123 --issue 42
+| Переменная | Описание | Обязательно |
+|------------|----------|-------------|
+| `LLM_API_KEY` | API ключ LLM провайдера | Да |
+| `GITHUB_TOKEN` | GitHub Personal Access Token | Да |
+| `GITHUB_REPO` | Целевой репозиторий (owner/repo) | Да |
+| `LLM_PROVIDER` | Провайдер (openrouter, openai, groq) | Нет (default: openrouter) |
+| `LLM_MODEL` | Модель LLM | Нет (default: gemini-2.5-flash) |
+| `MAX_ITERATIONS` | Макс. итераций цикла | Нет (default: 5) |
 
-# Start webhook server
+## CLI команды
+
+```bash
+# Полный SDLC цикл (Code Agent → CI → Reviewer → Fix → ...)
+python -m src.cli issue <issue_number>
+
+# Только Code Agent (создать PR без review)
+python -m src.cli code <issue_number>
+
+# Только Reviewer Agent (проверить существующий PR)
+python -m src.cli review <pr_number> --issue <issue_number>
+
+# Webhook сервер для GitHub events
 python -m src.cli server --port 8080
 ```
 
-#### GitHub Actions
+## GitHub Actions
 
-Add secrets to your repository:
-- `LLM_API_KEY`: Your LLM provider API key
+Workflow автоматически запускается при:
+- Создании Issue с label `auto-fix` или `ai-agent`
+- Создании/обновлении PR с веткой `issue-*-auto`
 
-Add variables (optional):
-- `LLM_PROVIDER`: Provider name (default: openrouter)
-- `LLM_MODEL`: Model name (default: google/gemini-2.5-flash)
+Настройка в целевом репозитории:
+1. Secrets → `LLM_API_KEY`
+2. Variables → `LLM_PROVIDER`, `LLM_MODEL` (опционально)
 
-Create an issue with label `auto-fix` or `ai-agent` to trigger the workflow.
+## Примеры работы
 
-## LLM Provider Configuration
+### Тестовый репозиторий
 
-The system supports multiple providers via OpenAI-compatible API:
+[ekukovenko/test-todo-app](https://github.com/ekukovenko/test-todo-app)
 
-| Provider | LLM_PROVIDER | Default Model |
-|----------|--------------|---------------|
-| OpenRouter | `openrouter` | `google/gemini-2.5-flash` |
-| OpenAI | `openai` | `gpt-4o-mini` |
-| Groq | `groq` | `llama-3.3-70b-versatile` |
-| Mistral | `mistral` | `mistral-small-latest` |
-| Anthropic | `anthropic` | `claude-3-5-sonnet-20241022` |
+### Примеры Issues и PRs
 
-## Project Structure
+| Issue | PR | Описание | Итерации | Результат |
+|-------|-----|----------|----------|-----------|
+| [#40](https://github.com/ekukovenko/test-todo-app/issues/40) | [#41](https://github.com/ekukovenko/test-todo-app/pull/41) | Add multiply function | 1 | APPROVE |
+| [#38](https://github.com/ekukovenko/test-todo-app/issues/38) | [#39](https://github.com/ekukovenko/test-todo-app/pull/39) | Add greet function | 2 | APPROVE |
+| [#35](https://github.com/ekukovenko/test-todo-app/issues/35) | [#37](https://github.com/ekukovenko/test-todo-app/pull/37) | Add hello_world function | 1 | APPROVE |
+
+### Пример Issue
+
+```markdown
+Title: Add multiply function
+
+Body:
+Добавить функцию multiply(a, b) в файл app/math_utils.py,
+которая возвращает произведение двух чисел.
+```
+
+### Пример Review от Reviewer Agent
+
+```markdown
+👀 **Reviewer Agent** ✅ APPROVE
+
+PR добавляет функцию multiply в app/math_utils.py, как описано в задаче.
+CI проходит, уязвимости не обнаружены.
+
+---
+*Статус: APPROVE (отправлено как COMMENT из-за ограничений GitHub)*
+```
+
+## Структура проекта
 
 ```
 ├── src/
-│   ├── agents/           # Code and Reviewer agents
-│   ├── core/             # Config and orchestrator
-│   ├── github/           # GitHub API client
-│   ├── tools/            # Agent tools
-│   ├── webhook/          # Webhook server
-│   └── cli.py            # CLI interface
-├── tests/                # Unit tests
+│   ├── agents/           # Code Agent и Reviewer Agent
+│   │   ├── code_agent.py
+│   │   └── reviewer_agent.py
+│   ├── core/             # Конфигурация и оркестратор
+│   │   ├── config.py
+│   │   └── orchestrator.py
+│   ├── github/           # GitHub API клиент
+│   ├── tools/            # Инструменты агентов
+│   │   ├── code_tools.py    # write_file, check_style, security
+│   │   └── review_tools.py  # get_diff, submit_review
+│   ├── webhook/          # Webhook сервер
+│   └── cli.py            # CLI интерфейс
+├── tests/                # Тесты
 ├── .github/workflows/    # GitHub Actions
+│   ├── ci.yml            # Lint + Tests
+│   └── sdlc-agent.yml    # SDLC automation
 ├── Dockerfile
 ├── docker-compose.yml
+├── requirements.txt
 └── pyproject.toml
 ```
 
-## API Endpoints
+## Особенности реализации
 
-When running as webhook server:
+- **Изоляция агентов**: Code Agent и Reviewer Agent работают независимо
+- **Session memory**: Агенты помнят контекст в рамках одного Issue
+- **Автоформатирование**: `ruff format` применяется автоматически при записи файлов
+- **Security checks**: Проверка на OWASP уязвимости (SQL injection, XSS, secrets)
+- **CI wait**: Оркестратор ждёт завершения CI перед review
+- **Fallback reviews**: Если GitHub не позволяет APPROVE/REQUEST_CHANGES на свой PR, постится как COMMENT с маркером
+- **LangFuse tracing**: Опциональная трассировка для отладки (переменные `LANGFUSE_*`)
 
-- `GET /health` - Health check
-- `POST /webhook` - GitHub webhook endpoint
-- `POST /api/issue/{number}` - Manually trigger issue processing
-- `POST /api/review/{number}` - Manually trigger PR review
-
-## Development
-
-```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Run linter
-ruff check src/
-
-# Run tests
-pytest -v
-```
