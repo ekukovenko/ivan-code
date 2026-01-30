@@ -206,3 +206,23 @@ CI проходит, уязвимости не обнаружены.
 - **Fallback reviews**: Если GitHub не позволяет APPROVE/REQUEST_CHANGES на свой PR, постится как COMMENT с маркером
 - **LangFuse tracing**: Опциональная трассировка для отладки (переменные `LANGFUSE_*`)
 
+## Тестирование
+
+```bash
+# Установить dev зависимости
+pip install -e ".[dev]"
+
+# Линтер
+ruff check src/
+
+# Unit тесты
+pytest -v
+
+# Интеграционные тесты с LLM (требует LLM_API_KEY)
+RUN_INTEGRATION_TESTS=1 pytest tests/test_agent_deepeval.py::test_integration_code_agent_real_llm -v
+```
+
+## Лицензия
+
+MIT
+
