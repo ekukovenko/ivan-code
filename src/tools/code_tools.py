@@ -6,6 +6,62 @@ from agno.tools import tool
 from src.github.client import GitHubClient
 
 
+# Security vulnerability patterns (OWASP-based)
+SECURITY_PATTERNS = {
+    "hardcoded_secret": [
+        (r'(?i)(password|passwd|pwd|secret|api_key|apikey|token|auth_token)\s*=\s*["\'][^"\']{4,}["\']', "Hardcoded secret"),
+        (r'(?i)(aws_access_key|aws_secret|private_key)\s*=\s*["\'][^"\']+["\']', "Hardcoded AWS/private key"),
+    ],
+    "sql_injection": [
+        (r'execute\s*\(\s*f["\']', "SQL injection via f-string"),
+        (r'execute\s*\([^)]*\s*%\s*', "SQL injection via % formatting"),
+        (r'execute\s*\([^)]*\+', "SQL injection via concatenation"),
+    ],
+    "command_injection": [
+        (r'os\.system\s*\(', "Command injection via os.system"),
+        (r'subprocess\.[a-z]+\s*\([^)]*shell\s*=\s*True', "Command injection via shell=True"),
+        (r'eval\s*\([^)]*input\s*\(', "Code injection via eval(input())"),
+        (r'exec\s*\([^)]*input\s*\(', "Code injection via exec(input())"),
+    ],
+    "path_traversal": [
+        (r'open\s*\(\s*[^)]*\+[^)]*\)', "Path traversal via concatenation in open()"),
+        (r'open\s*\(\s*f["\']', "Path traversal via f-string in open()"),
+    ],
+    "unsafe_deserialization": [
+        (r'pickle\.loads?\s*\(', "Unsafe deserialization via pickle"),
+        (r'yaml\.load\s*\([^)]*\)(?!.*Loader\s*=)', "Unsafe YAML load without Loader"),
+        (r'yaml\.unsafe_load\s*\(', "Unsafe YAML load"),
+    ],
+    "weak_crypto": [
+        (r'hashlib\.md5\s*\(', "Weak hash: MD5"),
+        (r'hashlib\.sha1\s*\(', "Weak hash: SHA1"),
+    ],
+}
+
+
+def check_security_issues(content: str, filename: str = "") -> list[dict]:
+    """Check content for security vulnerabilities."""
+    issues = []
+    lines = content.split('\n')
+
+    for category, patterns in SECURITY_PATTERNS.items():
+        for pattern, description in patterns:
+            for i, line in enumerate(lines, 1):
+                if re.search(pattern, line):
+                    # Skip if it's a comment or in a string that looks like docs
+                    stripped = line.strip()
+                    if stripped.startswith('#'):
+                        continue
+                    issues.append({
+                        "line": i,
+                        "category": category,
+                        "description": description,
+                        "code": line.strip()[:80],
+                        "severity": "HIGH" if category in ["sql_injection", "command_injection", "hardcoded_secret"] else "MEDIUM",
+                    })
+    return issues
+
+
 def create_code_tools(github_client: GitHubClient, branch: str):
     """Create tools for Code Agent with GitHub context."""
 
@@ -220,6 +276,72 @@ def create_code_tools(github_client: GitHubClient, branch: str):
         except Exception as e:
             return f"Error searching: {e}"
 
+    @tool
+    def security_check(path: str) -> str:
+        """Проверить файл на уязвимости безопасности (OWASP).
+
+        Проверяет:
+        - Hardcoded secrets (пароли, API ключи, токены)
+        - SQL injection
+        - Command injection (os.system, shell=True)
+        - Path traversal
+        - Unsafe deserialization (pickle, yaml)
+        - Weak crypto (MD5, SHA1)
+
+        Args:
+            path: Путь к файлу для проверки
+        """
+        content = github_client.get_file_content(path, ref=branch)
+        if content is None:
+            return f"Error: File '{path}' not found"
+
+        issues = check_security_issues(content, path)
+
+        if not issues:
+            return f"OK: {path} — уязвимостей не найдено"
+
+        result = [f"SECURITY: {path} — найдено {len(issues)} проблем:\n"]
+        for issue in issues:
+            result.append(
+                f"  [{issue['severity']}] Line {issue['line']}: {issue['description']}\n"
+                f"    > {issue['code']}"
+            )
+        return "\n".join(result)
+
+    @tool
+    def security_scan_all() -> str:
+        """Проверить ВСЕ файлы репозитория на уязвимости.
+
+        Сканирует .py, .js, .ts, .java, .go, .kt файлы.
+        Запусти перед завершением работы!
+        """
+        try:
+            files = github_client.list_files(ref=branch)
+            scannable = [f for f in files if f.endswith(('.py', '.js', '.ts', '.java', '.go', '.kt'))]
+
+            all_issues = []
+            for path in scannable:
+                content = github_client.get_file_content(path, ref=branch)
+                if content is None:
+                    continue
+
+                issues = check_security_issues(content, path)
+                if issues:
+                    all_issues.append((path, issues))
+
+            if not all_issues:
+                return f"OK: Проверено {len(scannable)} файлов — уязвимостей не найдено"
+
+            result = [f"SECURITY SCAN: Найдены проблемы в {len(all_issues)} файлах:\n"]
+            for path, issues in all_issues:
+                result.append(f"\n{path}:")
+                for issue in issues:
+                    result.append(f"  [{issue['severity']}] Line {issue['line']}: {issue['description']}")
+
+            return "\n".join(result)
+        except Exception as e:
+            return f"Error: {e}"
+
     return [
         read_file,
         write_file,
@@ -228,4 +350,6 @@ def create_code_tools(github_client: GitHubClient, branch: str):
         search_in_files,
         check_python_style,
         validate_all_python_files,
+        security_check,
+        security_scan_all,
     ]

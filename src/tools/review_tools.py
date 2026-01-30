@@ -3,10 +3,18 @@
 from agno.tools import tool
 
 from src.github.client import GitHubClient
+from src.tools.code_tools import check_security_issues
 
 
-def create_review_tools(github_client: GitHubClient, pr_number: int):
-    """Create tools for Reviewer Agent with PR context."""
+def create_review_tools(github_client: GitHubClient, pr_number: int, review_state: dict | None = None):
+    """Create tools for Reviewer Agent with PR context.
+
+    Args:
+        github_client: GitHub API client
+        pr_number: PR number to review
+        review_state: Dict to track submit_review calls. Updated with
+                      {"submitted": True, "decision": "..."} when tool is called.
+    """
 
     @tool
     def get_pr_diff() -> str:
@@ -112,6 +120,10 @@ def create_review_tools(github_client: GitHubClient, pr_number: int):
                     event=event,
                     comments=inline_comments if inline_comments else None,
                 )
+                # Track successful submission
+                if review_state is not None:
+                    review_state["submitted"] = True
+                    review_state["decision"] = decision.upper()
                 return f"Review submitted: {decision}"
             except Exception as e:
                 # GitHub doesn't allow approving own PRs - fallback to COMMENT
@@ -123,10 +135,58 @@ def create_review_tools(github_client: GitHubClient, pr_number: int):
                         event="COMMENT",
                         comments=inline_comments if inline_comments else None,
                     )
+                    # Track successful submission (APPROVE via COMMENT fallback)
+                    if review_state is not None:
+                        review_state["submitted"] = True
+                        review_state["decision"] = "APPROVE"
                     return f"Review submitted: APPROVE (as COMMENT due to GitHub limitation)"
                 raise
         except Exception as e:
             return f"Error submitting review: {e}"
+
+    @tool
+    def security_check_pr() -> str:
+        """Проверить изменённые файлы PR на уязвимости безопасности.
+
+        Проверяет ТОЛЬКО файлы, изменённые в PR:
+        - Hardcoded secrets (пароли, API ключи)
+        - SQL/Command injection
+        - Path traversal
+        - Unsafe deserialization
+        - Weak crypto
+        """
+        try:
+            pr_data = github_client.get_pull_request(pr_number)
+            pr = github_client.repo.get_pull(pr_number)
+
+            scannable_ext = ('.py', '.js', '.ts', '.java', '.go', '.kt')
+            files_to_check = [f for f in pr_data.files_changed if f.endswith(scannable_ext)]
+
+            if not files_to_check:
+                return "INFO: Нет файлов для проверки безопасности в этом PR"
+
+            all_issues = []
+            for path in files_to_check:
+                content = github_client.get_file_content(path, ref=pr.head.ref)
+                if content is None:
+                    continue
+
+                issues = check_security_issues(content, path)
+                if issues:
+                    all_issues.append((path, issues))
+
+            if not all_issues:
+                return f"SECURITY OK: Проверено {len(files_to_check)} файлов — уязвимостей не найдено"
+
+            result = [f"SECURITY: Найдены проблемы в {len(all_issues)} файлах:\n"]
+            for path, issues in all_issues:
+                result.append(f"\n{path}:")
+                for issue in issues:
+                    result.append(f"  [{issue['severity']}] Line {issue['line']}: {issue['description']}")
+
+            return "\n".join(result)
+        except Exception as e:
+            return f"Error: {e}"
 
     return [
         get_pr_diff,
@@ -134,5 +194,6 @@ def create_review_tools(github_client: GitHubClient, pr_number: int):
         get_ci_status,
         read_file,
         get_issue_requirements,
+        security_check_pr,
         submit_review,
     ]

@@ -27,7 +27,7 @@ REVIEWER_AGENT_PROMPT = """<role>
 1. **Соответствие требованиям**: Код решает задачу из issue?
 2. **Качество кода**: Читаемый, идиоматичный, поддерживаемый?
 3. **Баги**: Логические ошибки, необработанные edge cases?
-4. **Безопасность**: Инъекции, XSS, утечки данных?
+4. **Безопасность**: Вызови security_check_pr() для проверки уязвимостей!
 5. **Стиль**: Соответствует конвенциям языка и проекта?
 </checklist>
 
@@ -85,8 +85,9 @@ REVIEWER_AGENT_PROMPT = """<role>
 1. Получи diff через get_pr_diff — пойми что изменилось
 2. Проверь CI статус через get_ci_status
 3. Прочитай требования issue через get_issue_requirements
-4. При необходимости прочитай полные файлы для контекста
-5. **ОБЯЗАТЕЛЬНО** вызови submit_review с решением
+4. Вызови security_check_pr() — проверь на уязвимости
+5. При необходимости прочитай полные файлы для контекста
+6. **ОБЯЗАТЕЛЬНО** вызови submit_review с решением
 </workflow>
 
 ⚠️ КРИТИЧНО: Ты ДОЛЖЕН вызвать submit_review в конце! Без этого ревью не будет отправлено.
@@ -126,8 +127,11 @@ class ReviewerAgent:
         Returns:
             dict with keys: decision, summary, needs_changes
         """
-        # Create tools with PR context
-        tools = create_review_tools(self.github, pr_number)
+        # Track if submit_review was called
+        review_state = {"submitted": False, "decision": None}
+
+        # Create tools with PR context and state tracking
+        tools = create_review_tools(self.github, pr_number, review_state)
 
         # Create agent
         agent = Agent(
@@ -143,8 +147,13 @@ class ReviewerAgent:
         try:
             response = agent.run(prompt)
 
-            # Parse decision from response
-            decision = self._parse_decision(response.content)
+            if review_state["submitted"]:
+                # LLM called submit_review — use its decision
+                decision = review_state["decision"]
+            else:
+                # LLM did NOT call submit_review — fallback: post review ourselves
+                decision = self._parse_decision(response.content)
+                self._fallback_post_review(pr_number, decision, response.content)
 
             return {
                 "decision": decision,
@@ -157,6 +166,30 @@ class ReviewerAgent:
                 "summary": f"Review failed: {str(e)}",
                 "needs_changes": True,
             }
+
+    def _fallback_post_review(self, pr_number: int, decision: str, summary: str) -> None:
+        """Post review to GitHub when LLM didn't call submit_review."""
+        try:
+            marked_summary = f"**Reviewer Agent** (fallback)\n\n{summary}"
+            event = decision.upper()
+
+            try:
+                self.github.create_pr_review(
+                    pr_number=pr_number,
+                    body=marked_summary,
+                    event=event,
+                )
+            except Exception as e:
+                # GitHub doesn't allow approving own PRs
+                if "approve your own" in str(e).lower() and event == "APPROVE":
+                    marked_summary = f"**Reviewer Agent** APPROVED (fallback)\n\n{summary}\n\n---\n*Статус: APPROVE (отправлено как COMMENT из-за ограничений GitHub)*"
+                    self.github.create_pr_review(
+                        pr_number=pr_number,
+                        body=marked_summary,
+                        event="COMMENT",
+                    )
+        except Exception:
+            pass  # Ignore fallback errors to not break the flow
 
     def _build_prompt(self, pr_number: int, issue_number: int | None) -> str:
         """Build review prompt."""

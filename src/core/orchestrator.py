@@ -141,6 +141,7 @@ class SDLCOrchestrator:
 
             decision = review_result["decision"]
             logger.info(f"Review decision: {decision}")
+            logger.info(f"Review summary:\n{review_result['summary']}")
 
             if decision == "APPROVE":
                 return CycleResult(
