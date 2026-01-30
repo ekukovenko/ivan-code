@@ -30,6 +30,12 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
 CI_WAIT_TIMEOUT = int(os.getenv("CI_WAIT_TIMEOUT", "300"))  # seconds, 0 = no wait
 
+# LangFuse Configuration (optional, for observability)
+LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "false").lower() == "true"
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
 
 # Provider URLs (OpenAI-compatible)
 BASE_URLS = {
@@ -99,6 +105,22 @@ class Settings:
     @property
     def ci_wait_timeout(self) -> int:
         return CI_WAIT_TIMEOUT
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        return LANGFUSE_ENABLED
+
+    @property
+    def langfuse_public_key(self) -> str:
+        return LANGFUSE_PUBLIC_KEY
+
+    @property
+    def langfuse_secret_key(self) -> str:
+        return LANGFUSE_SECRET_KEY
+
+    @property
+    def langfuse_host(self) -> str:
+        return LANGFUSE_HOST
 
 
 def get_settings() -> Settings:

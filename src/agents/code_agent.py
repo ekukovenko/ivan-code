@@ -4,6 +4,7 @@ from agno.agent import Agent
 from agno.models.openrouter import OpenRouter
 
 from src.core.config import get_settings
+from src.core.tracing import log_agent_generation, trace_agent_run
 from src.github.client import GitHubClient, IssueData
 from src.tools.code_tools import create_code_tools
 
@@ -99,7 +100,11 @@ CODE_AGENT_PROMPT = """<role>
 
 
 class CodeAgent:
-    """Agent that generates code changes based on Issues."""
+    """Agent that generates code changes based on Issues.
+
+    Uses session_id for memory persistence within a single issue processing cycle.
+    Integrates with LangFuse for observability when enabled.
+    """
 
     def __init__(
         self,
@@ -111,6 +116,38 @@ class CodeAgent:
         self.model = model or settings.default_model
         self.api_key = settings.llm_api_key
         self.max_iterations = settings.max_iterations
+
+        # Agent instance cache for session memory
+        self._agents: dict[str, Agent] = {}
+
+    def _get_or_create_agent(
+        self,
+        session_id: str,
+        branch: str,
+    ) -> Agent:
+        """Get existing agent or create new one with session memory.
+
+        Args:
+            session_id: Unique session ID (e.g., issue-123)
+            branch: Git branch for tools context
+
+        Returns:
+            Agent instance with preserved session memory
+        """
+        if session_id not in self._agents:
+            tools = create_code_tools(self.github, branch)
+            self._agents[session_id] = Agent(
+                model=OpenRouter(id=self.model, api_key=self.api_key),
+                tools=tools,
+                instructions=CODE_AGENT_PROMPT,
+                session_id=session_id,
+                markdown=True,
+                # Enable step-by-step reasoning
+                reasoning=True,
+                reasoning_min_steps=1,
+                reasoning_max_steps=5,
+            )
+        return self._agents[session_id]
 
     def process_issue(self, issue_number: int) -> dict:
         """Process an issue and create a PR with changes.
@@ -125,44 +162,53 @@ class CodeAgent:
         branch_name = f"issue-{issue_number}-auto"
         self.github.create_branch(branch_name)
 
-        # Create tools with branch context
-        tools = create_code_tools(self.github, branch_name)
+        # Session ID for memory persistence across feedback iterations
+        session_id = f"issue-{issue_number}"
 
-        # Create agent
-        agent = Agent(
-            model=OpenRouter(id=self.model, api_key=self.api_key),
-            tools=tools,
-            instructions=CODE_AGENT_PROMPT,
-            markdown=True,
-        )
+        # Get or create agent with session memory and reasoning
+        agent = self._get_or_create_agent(session_id, branch_name)
 
         # Build prompt with issue context
         prompt = self._build_prompt(issue)
 
-        # Run agent
-        try:
-            response = agent.run(prompt)
+        # Run agent with LangFuse tracing
+        with trace_agent_run(
+            session_id=session_id,
+            agent_name="code_agent",
+            metadata={"issue_number": issue_number, "branch": branch_name},
+        ) as trace:
+            try:
+                response = agent.run(prompt)
 
-            # Create PR
-            pr_number = self.github.create_pull_request(
-                title=f"Fix #{issue_number}: {issue.title}",
-                body=self._create_pr_body(issue, response.content),
-                head=branch_name,
-            )
+                # Log generation to LangFuse
+                log_agent_generation(
+                    trace=trace,
+                    name="process_issue",
+                    input_text=prompt,
+                    output_text=response.content,
+                    model=self.model,
+                )
 
-            return {
-                "success": True,
-                "pr_number": pr_number,
-                "branch": branch_name,
-                "message": "PR created successfully",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "pr_number": None,
-                "branch": branch_name,
-                "message": f"Error: {str(e)}",
-            }
+                # Create PR
+                pr_number = self.github.create_pull_request(
+                    title=f"Fix #{issue_number}: {issue.title}",
+                    body=self._create_pr_body(issue, response.content),
+                    head=branch_name,
+                )
+
+                return {
+                    "success": True,
+                    "pr_number": pr_number,
+                    "branch": branch_name,
+                    "message": "PR created successfully",
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "pr_number": None,
+                    "branch": branch_name,
+                    "message": f"Error: {str(e)}",
+                }
 
     def _build_prompt(self, issue: IssueData) -> str:
         """Build prompt for the agent."""
@@ -216,19 +262,17 @@ Closes #{issue.number}
     ) -> dict:
         """Apply changes based on reviewer feedback.
 
+        Uses the same session as process_issue to preserve memory context.
+
         Returns:
             dict with keys: success, message
         """
-        # Create tools with branch context
-        tools = create_code_tools(self.github, branch)
+        # Extract issue number from branch name (e.g., "issue-123-auto" -> "issue-123")
+        # This ensures we use the same session_id as process_issue
+        session_id = "-".join(branch.split("-")[:2])  # "issue-123"
 
-        # Create agent
-        agent = Agent(
-            model=OpenRouter(id=self.model, api_key=self.api_key),
-            tools=tools,
-            instructions=CODE_AGENT_PROMPT,
-            markdown=True,
-        )
+        # Get existing agent with session memory (or create if not exists)
+        agent = self._get_or_create_agent(session_id, branch)
 
         prompt = f"""Ревьюер запросил изменения в PR #{pr_number}.
 
@@ -250,21 +294,36 @@ Closes #{issue.number}
 Действуй!
 """
 
-        try:
-            response = agent.run(prompt)
+        # Run agent with LangFuse tracing
+        with trace_agent_run(
+            session_id=session_id,
+            agent_name="code_agent",
+            metadata={"pr_number": pr_number, "branch": branch, "action": "feedback"},
+        ) as trace:
+            try:
+                response = agent.run(prompt)
 
-            # Add comment to PR
-            self.github.add_pr_comment(
-                pr_number,
-                f"🤖 **Code Agent** — исправления по фидбеку:\n\n{response.content[:500]}...",
-            )
+                # Log generation to LangFuse
+                log_agent_generation(
+                    trace=trace,
+                    name="apply_review_feedback",
+                    input_text=prompt,
+                    output_text=response.content,
+                    model=self.model,
+                )
 
-            return {
-                "success": True,
-                "message": "Feedback addressed",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Error: {str(e)}",
-            }
+                # Add comment to PR
+                self.github.add_pr_comment(
+                    pr_number,
+                    f"🤖 **Code Agent** — исправления по фидбеку:\n\n{response.content[:500]}...",
+                )
+
+                return {
+                    "success": True,
+                    "message": "Feedback addressed",
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "message": f"Error: {str(e)}",
+                }

@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.models.openrouter import OpenRouter
 
 from src.core.config import get_settings
+from src.core.tracing import log_agent_generation, trace_agent_run
 from src.github.client import GitHubClient
 from src.tools.review_tools import create_review_tools
 
@@ -105,7 +106,11 @@ REVIEWER_AGENT_PROMPT = """<role>
 
 
 class ReviewerAgent:
-    """Agent that reviews PRs independently from Code Agent."""
+    """Agent that reviews PRs independently from Code Agent.
+
+    Uses session_id for memory persistence within review cycles.
+    Integrates with LangFuse for observability when enabled.
+    """
 
     def __init__(
         self,
@@ -117,6 +122,9 @@ class ReviewerAgent:
         self.model = model or settings.default_model
         self.api_key = settings.llm_api_key
 
+        # Agent instance cache for session memory
+        self._agents: dict[str, Agent] = {}
+
     def review_pr(self, pr_number: int, issue_number: int | None = None) -> dict:
         """Review a pull request.
 
@@ -127,45 +135,71 @@ class ReviewerAgent:
         Returns:
             dict with keys: decision, summary, needs_changes
         """
+        # Session ID for memory persistence (separate from code agent)
+        session_id = f"review-pr-{pr_number}"
+
         # Track if submit_review was called
         review_state = {"submitted": False, "decision": None}
 
         # Create tools with PR context and state tracking
         tools = create_review_tools(self.github, pr_number, review_state)
 
-        # Create agent
-        agent = Agent(
-            model=OpenRouter(id=self.model, api_key=self.api_key),
-            tools=tools,
-            instructions=REVIEWER_AGENT_PROMPT,
-            markdown=True,
-        )
+        # Create or get agent with session memory and reasoning
+        if session_id not in self._agents:
+            self._agents[session_id] = Agent(
+                model=OpenRouter(id=self.model, api_key=self.api_key),
+                tools=tools,
+                instructions=REVIEWER_AGENT_PROMPT,
+                session_id=session_id,
+                markdown=True,
+                # Enable step-by-step reasoning for thorough review
+                reasoning=True,
+                reasoning_min_steps=1,
+                reasoning_max_steps=5,
+            )
+
+        agent = self._agents[session_id]
 
         # Build prompt
         prompt = self._build_prompt(pr_number, issue_number)
 
-        try:
-            response = agent.run(prompt)
+        # Run agent with LangFuse tracing
+        with trace_agent_run(
+            session_id=session_id,
+            agent_name="reviewer_agent",
+            metadata={"pr_number": pr_number, "issue_number": issue_number},
+        ) as trace:
+            try:
+                response = agent.run(prompt)
 
-            if review_state["submitted"]:
-                # LLM called submit_review — use its decision
-                decision = review_state["decision"]
-            else:
-                # LLM did NOT call submit_review — fallback: post review ourselves
-                decision = self._parse_decision(response.content)
-                self._fallback_post_review(pr_number, decision, response.content)
+                # Log generation to LangFuse
+                log_agent_generation(
+                    trace=trace,
+                    name="review_pr",
+                    input_text=prompt,
+                    output_text=response.content,
+                    model=self.model,
+                )
 
-            return {
-                "decision": decision,
-                "summary": response.content,
-                "needs_changes": decision == "REQUEST_CHANGES",
-            }
-        except Exception as e:
-            return {
-                "decision": "COMMENT",
-                "summary": f"Review failed: {str(e)}",
-                "needs_changes": True,
-            }
+                if review_state["submitted"]:
+                    # LLM called submit_review — use its decision
+                    decision = review_state["decision"]
+                else:
+                    # LLM did NOT call submit_review — fallback: post review ourselves
+                    decision = self._parse_decision(response.content)
+                    self._fallback_post_review(pr_number, decision, response.content)
+
+                return {
+                    "decision": decision,
+                    "summary": response.content,
+                    "needs_changes": decision == "REQUEST_CHANGES",
+                }
+            except Exception as e:
+                return {
+                    "decision": "COMMENT",
+                    "summary": f"Review failed: {str(e)}",
+                    "needs_changes": True,
+                }
 
     def _fallback_post_review(self, pr_number: int, decision: str, summary: str) -> None:
         """Post review to GitHub when LLM didn't call submit_review."""
