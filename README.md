@@ -97,7 +97,7 @@ docker-compose up -d
 #   LLM не знает куда и что писать ):
 
 # 5. Запустить обработку issue
-docker-compose run --rm ivan-code-sdlc-agent python -m src.cli issue <номер_issue>
+docker run --rm --env-file .env ivan-code-sdlc-agent python -m src.cli issue <номер_issue>
 ```
 
 ### Запуск локально
@@ -125,6 +125,7 @@ python -m src.cli issue <номер>
 | `LLM_PROVIDER` | Провайдер (openrouter, openai, groq) | Нет (default: openrouter) |
 | `LLM_MODEL` | Модель LLM | Нет (default: gemini-2.5-flash) |
 | `MAX_ITERATIONS` | Макс. итераций цикла | Нет (default: 5) |
+| `CI_WAIT_TIMEOUT` | Таймаут ожидания CI в секундах (0 = не ждать, для репозиториев без CI) | Нет (default: 300) |
 
 ## CLI команды
 
@@ -225,6 +226,10 @@ CI проходит, уязвимости не обнаружены.
 - **CI wait**: Оркестратор ждёт завершения CI перед review
 - **Fallback reviews**: Если GitHub не позволяет APPROVE/REQUEST_CHANGES на свой PR, постится как COMMENT с маркером
 - **LangFuse tracing**: Опциональная трассировка для отладки (переменные `LANGFUSE_*`)
+
+## Известные ограничения
+
+- **Репозитории без CI**: Если в целевом репозитории не настроен CI/CD, Reviewer Agent будет сообщать "CI pending". Это косметическая проблема — агент завершит review, но может указать на несуществующий CI.
 
 ## Тестирование
 
