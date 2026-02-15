@@ -73,15 +73,31 @@
 
 ```bash
 # 1. Клонировать репозиторий
-git clone https://github.com/ekukovenko/mega-ai-agent-coding.git
-cd mega-ai-agent-coding
+# SSH
+git clone git@github.com:ekukovenko/ivan-code.git
+# или HTTPS
+git clone https://github.com/ekukovenko/ivan-code.git
+cd ivan-code
 
 # 2. Настроить переменные окружения
 cp .env.example .env
-# Отредактировать .env: LLM_API_KEY, GITHUB_TOKEN, GITHUB_REPO
+# Отредактировать .env: LLM_API_KEY, GITHUB_TOKEN, GITHUB_REPO, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, также можно настроить время ожидания завершения CI - CI_WAIT_TIMEOUT и максимальное кол-во итераций агентов - MAX_ITERATIONS
 
-# 3. Запустить
+# 3. Запустить контейнер
 docker-compose up -d
+
+# 4. Создать issue вручную на гитхабе (обязательно указать путь к файлу, название функции или класса и что делает)
+# Пример хорошего Issue:
+#   Title: Add multiply(a,b) to app/math.py
+#   Body: Возвращает произведение
+
+#   Примеры плохого Issue:
+#   Title: титл
+#   Body: напиши функцию
+#   LLM не знает куда и что писать ):
+
+# 5. Запустить обработку issue
+docker run --rm --env-file .env ivan-code-sdlc-agent python -m src.cli issue <номер_issue>
 ```
 
 ### Запуск локально
@@ -93,8 +109,10 @@ pip install -e .
 # 2. Настроить .env
 cp .env.example .env
 
-# 3. Запустить обработку Issue
-python -m src.cli issue 42
+# 3. Создать issue вручную на гитхабе (также как было описано выше)
+
+# 4. Запустить обработку Issue
+python -m src.cli issue <номер>
 ```
 
 ### Переменные окружения
@@ -107,6 +125,7 @@ python -m src.cli issue 42
 | `LLM_PROVIDER` | Провайдер (openrouter, openai, groq) | Нет (default: openrouter) |
 | `LLM_MODEL` | Модель LLM | Нет (default: gemini-2.5-flash) |
 | `MAX_ITERATIONS` | Макс. итераций цикла | Нет (default: 5) |
+| `CI_WAIT_TIMEOUT` | Таймаут ожидания CI в секундах (0 = не ждать, для репозиториев без CI) | Нет (default: 300) |
 
 ## CLI команды
 
@@ -120,11 +139,13 @@ python -m src.cli code <issue_number>
 # Только Reviewer Agent (проверить существующий PR)
 python -m src.cli review <pr_number> --issue <issue_number>
 
-# Webhook сервер для GitHub events
+# Webhook сервер (реализован, требует публичного URL для работы с GitHub)
 python -m src.cli server --port 8080
 ```
 
 ## GitHub Actions
+
+Workflows реализованы, но не протестированы. Агенты запускались вручную через CLI/Docker. 
 
 Workflow автоматически запускается при:
 - Создании Issue с label `auto-fix` или `ai-agent`
@@ -145,8 +166,8 @@ Workflow автоматически запускается при:
 | Issue | PR | Описание | Итерации | Результат |
 |-------|-----|----------|----------|-----------|
 | [#40](https://github.com/ekukovenko/test-todo-app/issues/40) | [#41](https://github.com/ekukovenko/test-todo-app/pull/41) | Add multiply function | 1 | APPROVE |
-| [#38](https://github.com/ekukovenko/test-todo-app/issues/38) | [#39](https://github.com/ekukovenko/test-todo-app/pull/39) | Add greet function | 2 | APPROVE |
-| [#35](https://github.com/ekukovenko/test-todo-app/issues/35) | [#37](https://github.com/ekukovenko/test-todo-app/pull/37) | Add hello_world function | 1 | APPROVE |
+| [#31](https://github.com/ekukovenko/test-todo-app/issues/31) | [#32](https://github.com/ekukovenko/test-todo-app/pull/32) | Session memory + test | 1 | APPROVE |
+| [#29](https://github.com/ekukovenko/test-todo-app/issues/29) | [#30](https://github.com/ekukovenko/test-todo-app/pull/30) | Add square(x) function | 1 | APPROVE |
 
 ### Пример Issue
 
@@ -206,23 +227,19 @@ CI проходит, уязвимости не обнаружены.
 - **Fallback reviews**: Если GitHub не позволяет APPROVE/REQUEST_CHANGES на свой PR, постится как COMMENT с маркером
 - **LangFuse tracing**: Опциональная трассировка для отладки (переменные `LANGFUSE_*`)
 
+## Известные ограничения
+
+- **Репозитории без CI**: Если в целевом репозитории не настроен CI/CD, Reviewer Agent будет сообщать "CI pending". Это косметическая проблема — агент завершит review, но может указать на несуществующий CI.
+
 ## Тестирование
 
 ```bash
 # Установить dev зависимости
 pip install -e ".[dev]"
 
-# Линтер
-ruff check src/
-
 # Unit тесты
 pytest -v
 
 # Интеграционные тесты с LLM (требует LLM_API_KEY)
-RUN_INTEGRATION_TESTS=1 pytest tests/test_agent_deepeval.py::test_integration_code_agent_real_llm -v
+RUN_INTEGRATION_TESTS=1 pytest -v
 ```
-
-## Лицензия
-
-MIT
-
